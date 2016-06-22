@@ -81,3 +81,11 @@ We currently use this tool with Pg 9.4.  Your mileage may vary if you're using
 a different version, but give a shout if something breaks.
 
 [cpanm]: https://metacpan.org/pod/cpanm
+
+# Copyright
+
+Written by Thomas Sibley <trsibley@uw.edu>.  Copyright 2016– by the University
+of Washington.
+
+This repository is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
