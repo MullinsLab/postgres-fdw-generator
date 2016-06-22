@@ -15,7 +15,7 @@ proof-of-concept for something more general!
 
 Our use case is to bring together tables from three separate databases into one
 read-only _reporting_ database.  The _reporting_ database contains only foreign
-tables, and so might be considered "virtual".  The upshot of this "virtual
+tables and so might be considered "virtual".  The upshot of this "virtual
 database" is that a single query can use tables from all three actual databases
 at once.  Joining across databases is a typical reporting and analysis process
 and is made much easier when it can be done transparently all in SQL!
