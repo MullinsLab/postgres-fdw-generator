@@ -30,7 +30,7 @@ my ($opt, $usage) = describe_options(
   [ "Other options are:" ],
   [],
   [ 'server-host=s',    "Foreign server hostname, if it should be different than the host we connect to to read the schema" ],
-  [ 'tables=s@',        "List of tables for which to generate definitions; separate multiple tables by commas or specify the option multiple times; if not specified all tables in the schema are dumped" ],
+  [ 'tables=s@',        "List of tables for which to generate definitions; separate multiple tables by commas, spaces, or specify the option multiple times; if not specified all tables in the schema are dumped" ],
   [ 'help',             "print usage message and exit" ],
 );
 print($usage->text), exit if $opt->help;
@@ -42,7 +42,7 @@ my $dbname = $ENV{PGDATABASE} // die "PGDATABASE must be set\n";
 my $user   = $ENV{PGUSER}     // die "PGUSER must be set\n";
 my @tables =
    sort { fc($a) cmp fc($b) }
-    map { split /,/ }
+    map { split /[,\s]/ }
         ($opt->tables ? $opt->tables->@* : tables());
 
 say <<SQL;
