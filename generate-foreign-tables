@@ -6,16 +6,15 @@ use utf8;
 use open qw< :std :encoding(UTF-8) >;
 use experimental qw< postderef >;
 use Getopt::Long::Descriptive;
-use Module::Runtime qw< require_module >;
+use DBI;
 
 $|++;
 
 my ($opt, $usage) = describe_options(
-  "%c --db-schema [target schema] --perl-schema [DBIx::Class::Schema subclass] --models [Result classes]",
+  "%c --local-schema [local name] --remote-schema [target schema] --tables [desired tables]",
   [],
-  [ "Connects to a Pg database via a DBIx::Class::Schema subclass and generates SQL" ],
-  [ "to define each table using a foreign data wrapper (via the postgres_fdw" ],
-  [ "extension)." ],
+  [ "Connects to a Pg database and generates SQL to define each table using a" ],
+  [ "foreign data wrapper (via the postgres_fdw extension)." ],
   [],
   [ "Use PGHOST, PGDATABASE, and PGUSER to control connection information.  If a" ],
   [ "password is necessary, use a ~/.pgpass file." ],
@@ -25,35 +24,26 @@ my ($opt, $usage) = describe_options(
   [],
   [ "The following options are required:" ],
   [],
-  [ 'server-name=s',    "Name to use for the foreign server and of the database schema for the foreign table definitions", { required => 1 } ],
-  [ 'perl-schema=s',    "Perl package name of your DBIx::Class::Schema subclass; used to connect to your source database", { required => 1 } ],
+  [ 'local-schema=s',   "New database schema in which to define the foreign tables, used for the foreign server definition as well", { required => 1 } ],
+  [ 'remote-schema=s',  "Existing database schema containing the source tables for which to create foreign table definitions", { required => 1 } ],
   [],
   [ "Other options are:" ],
   [],
-  [ 'db-schema=s',      "Database schema of source tables" ],
   [ 'server-host=s',    "Foreign server hostname, if it should be different than the host we connect to to read the schema" ],
-  [ 'models=s@',        "List of abbreviated model/result classes for which to generate definitions; separate multiple models by commas or specify the option multiple times; if not specified all models are dumped" ],
-  [ 'I=s@',             "Adds additional paths to the front of \@INC, similar to perl's own -I option" ],
+  [ 'tables=s@',        "List of tables for which to generate definitions; separate multiple tables by commas, spaces, or specify the option multiple times; if not specified all tables in the schema are dumped" ],
   [ 'help',             "print usage message and exit" ],
 );
 print($usage->text), exit if $opt->help;
 
-unshift @INC, $opt->i->@*
-    if $opt->i;
-
-require_module($opt->perl_schema);
-
-my $db     = $opt->perl_schema->connect("dbi:Pg:");
-my $server = $opt->server_name;
+my $dbh    = DBI->connect("dbi:Pg:", undef, undef, { RaiseError => 1 });
+my $server = $opt->local_schema;
 my $host   = $opt->server_host || $ENV{PGHOST} || 'localhost';
-my $dbname = $ENV{PGDATABASE};
-my $user   = $ENV{PGUSER};
-my @models =
+my $dbname = $ENV{PGDATABASE} // die "PGDATABASE must be set\n";
+my $user   = $ENV{PGUSER}     // die "PGUSER must be set\n";
+my @tables =
    sort { fc($a) cmp fc($b) }
-    map { $_->new_result({}) }
-    map { $db->resultset($_) or die "Unknown result class '$_'\n" }
-    map { split /,/ }
-        ($opt->models ? $opt->models->@* : $db->sources);
+    map { split /[,\s]/ }
+        ($opt->tables ? $opt->tables->@* : tables());
 
 say <<SQL;
 DROP SERVER IF EXISTS $server CASCADE;
@@ -70,14 +60,13 @@ CREATE USER MAPPING
     OPTIONS (user '$user', password '$user');
 SQL
 
-for my $model (@models) {
-    my ($schema, $table) = table($model);
+for (@tables) {
+    my ($schema, $table) = table($_);
 
-    my $colinfo = $model->columns_info;
     my $columns =
         join ",\n    ",
-        map { column_def($_, $colinfo->{$_}) }
-            $model->columns;
+        map { column_def($_) }
+            columns($schema, $table);
 
 	say <<"    SQL";
 CREATE FOREIGN TABLE $server.$table (
@@ -91,20 +80,58 @@ GRANT SELECT ON ALL TABLES IN SCHEMA $server TO PUBLIC;
 GRANT USAGE  ON               SCHEMA $server TO PUBLIC;
 SQL
 
+sub tables {
+    my $sql = <<'    SQL';
+        SELECT n.nspname || '.' || c.relname
+          FROM pg_catalog.pg_class     c
+          JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+         WHERE c.relkind IN ('r', 'v', 'm')  -- tables, views, materialized views
+           AND n.nspname = ?
+         ORDER BY 1
+    SQL
+    return map { @$_ } $dbh->selectall_arrayref($sql, {}, $opt->remote_schema)->@*;
+}
+
 sub table {
-    my $model = shift;
-    my ($schema, $table) = $model->table =~ /\./
-        ? split /\./, $model->table
-        : (undef, $model->table);
-    $schema //= $opt->db_schema // 'public';
+    my $name = shift;
+    my ($schema, $table) = $name =~ /\./
+        ? split /\./, $name
+        : (undef, $name);
+    $schema //= $opt->remote_schema // 'public';
     return ($schema, $table);
 }
 
+sub columns {
+    my $schema = shift;
+    my $table  = shift;
+    my $sql    = <<'    SQL';
+        SELECT a.attnum                 as ordinal_position,
+               n.nspname                as table_schema,
+               c.relname                as table_name,
+               a.attname                as name,
+               NOT a.attnotnull         as is_nullable,
+               pg_catalog.format_type(a.atttypid, a.atttypmod)
+                                        as data_type
+
+          FROM pg_catalog.pg_class     c
+          JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+          JOIN pg_catalog.pg_attribute a ON (a.attrelid = c.oid)
+
+         WHERE c.relkind IN ('r', 'v', 'm')  -- tables, views, materialized views
+           AND n.nspname = ?
+           AND c.relname = ?
+           AND a.attnum > 0
+           AND NOT attisdropped
+
+         ORDER BY ordinal_position
+    SQL
+    return $dbh->selectall_arrayref($sql, { Slice => {} }, $schema, $table)->@*;
+}
+
 sub column_def {
-    my $name = shift;
     my $info = shift;
     return join " ",
-        $name,
+        $info->{name},
         type($info),
         ($info->{is_nullable} ? () : "NOT NULL");
 }
@@ -113,15 +140,15 @@ sub type {
     my $col  = shift;
     my $type = $col->{data_type};
 
-    my $known_types  = qr/^((big)?int(eger|$)|numeric|text|jsonb?|boolean)(\Q[]\E)?$/;
+    my $is_array = $type =~ s/\Q[]\E$//;
+
     my $builtin_type =
-        $type =~ $known_types ?                 $type :
-           $type eq "varchar" ? "$type($col->{size})" :
-                                               "text" ;
+        $type =~ /^(integer|bigint|int[48](range)?|numeric|text|character varying(\(\d+\))|jsonb?|boolean)$/
+            ? $type
+            : "text";
 
     $builtin_type .= "[]"
-        if $type =~ /\Q[]\E/
-       and not $builtin_type =~ /\Q[]\E/;
+        if $is_array;
 
-   return $builtin_type;
+    return $builtin_type;
 }
