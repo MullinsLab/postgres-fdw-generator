@@ -23,6 +23,17 @@ and is made much easier when it can be done transparently all in SQL!
 If you're a programmer, think of foreign data wrappers as a way to mixin tables
 from other databases.
 
+# Other options for easy creation of foreign tables
+
+Starting with version 9.5, PostgreSQL added support for the [`IMPORT FOREIGN
+SCHEMA` command][].  This command connects to the foreign server and creates a
+local foreign-table definition for you.  That's really nice!  You may still
+want to maintain your own definitions externally to have more control over
+them, but `IMPORT FOREIGN SCHEMA` is probably enough if you're using 9.5 or
+newer.
+
+[`IMPORT FOREIGN SCHEMA` command]: https://www.postgresql.org/docs/current/static/sql-importforeignschema.html
+
 # Usage
 
 ```
