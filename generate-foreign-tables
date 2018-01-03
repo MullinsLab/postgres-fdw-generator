@@ -143,7 +143,7 @@ sub type {
     my $is_array = $type =~ s/\Q[]\E$//;
 
     my $builtin_type =
-        $type =~ /^(integer|bigint|int[48](range)?|numeric|text|character varying(\(\d+\))|jsonb?|boolean)$/
+        $type =~ /^(integer|bigint|smallint|int[482](range)?|numeric|text|character varying(\(\d+\))|jsonb?|boolean)$/
             ? $type
             : "text";
 
